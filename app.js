@@ -1,15 +1,11 @@
 const express = require('express');
 const app = express();
+const path = require('path');
 const dotenv = require('dotenv');
 const axios = require('axios');
 const schedule = require('node-schedule');
-const LineAPI = require('line-api');
-dotenv.config();
 
-const notify = new LineAPI.Notify({
-  token: process.env.NOTIFY_TOKEN //Line Notify權杖: https://notify-bot.line.me/my/
-})
-
+dotenv.config({ path: path.resolve(__dirname, `./config/${ process.env.NODE_ENV }.env`) });
 
 app.get('/', (req, resp) => {
   axios.get(`https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-D0047-061`, {
@@ -22,23 +18,42 @@ app.get('/', (req, resp) => {
     .then(res => resp.send(res.data.records));
 })
 
+let rule = new schedule.RecurrenceRule();
+rule.dayOfWeek = [0, 1, 2, 3, 4, 5, 6];
+rule.hour = [9, 12, 15, 18, 21, 0];
+rule.minute = 3;
+rule.second = 0;
+
+schedule.scheduleJob(rule, () => {
+  axios.get(`https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-D0047-061`, {
+    params: {
+      Authorization: process.env.AUTH_CODE,
+      locationName: '中正區',
+      elementName: 'WeatherDescription'
+    }
+  }).then(res => {
+    let startTime = res.data.records.locations[0].location[0].weatherElement[0].time[0].startTime;
+    let endTime = res.data.records.locations[0].location[0].weatherElement[0].time[0].endTime;
+    let description = res.data.records.locations[0].location[0].weatherElement[0].time[0].elementValue[0].value;
+    let msg = `台北市中正區\n${ startTime } ~ ${ endTime }：\n${ description }`;
+    sendNotify(msg);
+  }).catch(err => {
+    sendNotify('取得天氣預報失敗...');
+  })
+});
+
+//Line Notify權杖申請: https://notify-bot.line.me/my/
+let sendNotify = msg => {
+  axios.post('https://notify-api.line.me/api/notify', null, {
+    headers: {
+      Authorization: `Bearer ${process.env.NOTIFY_TOKEN}`
+    },
+    params: {
+      message: msg
+    }
+  })
+}
+
 app.listen(8002, () => {
   console.log(`Server running at http://localhost:8002`);
 })
-
-let rule = new schedule.RecurrenceRule();
-rule.dayOfWeek = [0, new schedule.Range(0, 6)];
-rule.hour = 1;
-rule.minute = 18;
-rule.second = 00;
-
-schedule.scheduleJob(rule, () => {
-  console.log(new Date().toLocaleString());
-  notify.send({
-    message: '測試訊息',
-    sticker: 'smile', // shorthand
-    // sticker : { packageId: 1, id: 2 } // exact ids
-    // image: 'test.jpg' // local file
-    // image: { fullsize: 'http://example.com/1024x1024.jpg', thumbnail: 'http://example.com/240x240.jpg' } // remote url
-  }).then(console.log('發送成功!'))
-});
